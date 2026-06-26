@@ -9,11 +9,11 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xfffdf6);
 
-const camera = new THREE.OrthographicCamera(-8, 8, 5, -5, -60, 60);
-camera.position.set(0, 0, 14);
-camera.lookAt(0, 0, 0);
+const camera = new THREE.OrthographicCamera(-7.2, 7.2, 4.6, -4.6, 0.1, 100);
+camera.position.set(0, 6.0, -8.2);
+camera.lookAt(0, 0.15, 0);
 
-const COLORS = {
+const C = {
   ink: 0x050505,
   paper: 0xfffdf6,
   bus: 0xffc20a,
@@ -21,48 +21,44 @@ const COLORS = {
   pink: 0xf00658,
   orange: 0xff9f05,
   white: 0xffffff,
-  glass: 0x061015
+  glass: 0x061015,
+  road: 0x090909
 };
 
 const mat = {
-  ink: flat(COLORS.ink),
-  bus: flat(COLORS.bus),
-  cyan: flat(COLORS.cyan),
-  pink: flat(COLORS.pink),
-  orange: flat(COLORS.orange),
-  white: flat(COLORS.white),
-  glass: flat(COLORS.glass),
-  paper: flat(COLORS.paper)
+  ink: basic(C.ink),
+  road: basic(C.road),
+  bus: basic(C.bus),
+  cyan: basic(C.cyan),
+  pink: basic(C.pink),
+  orange: basic(C.orange),
+  white: basic(C.white),
+  glass: basic(C.glass)
 };
 
-function flat(color) {
+function basic(color) {
   return new THREE.MeshBasicMaterial({ color, toneMapped: false });
 }
 
-function box(w, h, d, material, parent, x = 0, y = 0, z = 0) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
-  mesh.position.set(x, y, z);
-  parent.add(mesh);
-  return mesh;
+function mesh(geo, material, parent, pos = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1]) {
+  const m = new THREE.Mesh(geo, material);
+  m.position.set(...pos);
+  m.rotation.set(...rot);
+  m.scale.set(...scale);
+  parent.add(m);
+  return m;
 }
 
-function circle(r, material, parent, x = 0, y = 0, z = 0, sx = 1, sy = 1) {
-  const mesh = new THREE.Mesh(new THREE.CircleGeometry(r, 28), material);
-  mesh.position.set(x, y, z);
-  mesh.scale.set(sx, sy, 1);
-  parent.add(mesh);
-  return mesh;
+function box(w, h, d, material, parent, pos, rot, scale) {
+  return mesh(new THREE.BoxGeometry(w, h, d), material, parent, pos, rot, scale);
 }
 
-function capsule(material, parent, x = 0, y = 0, z = 0, sx = 1, sy = 1) {
-  const group = new THREE.Group();
-  group.position.set(x, y, z);
-  group.scale.set(sx, sy, 1);
-  parent.add(group);
-  box(0.16, 0.42, 0.02, material, group, 0, -0.02, 0);
-  circle(0.08, material, group, 0, 0.19, 0);
-  circle(0.08, material, group, 0, -0.23, 0);
-  return group;
+function cyl(r1, r2, h, material, parent, pos, rot, segments = 24) {
+  return mesh(new THREE.CylinderGeometry(r1, r2, h, segments), material, parent, pos, rot);
+}
+
+function sphere(r, material, parent, pos, scale = [1, 1, 1]) {
+  return mesh(new THREE.SphereGeometry(r, 16, 10), material, parent, pos, [0, 0, 0], scale);
 }
 
 const world = new THREE.Group();
@@ -77,26 +73,23 @@ world.add(posterMarks);
 const busRig = new THREE.Group();
 world.add(busRig);
 
-const busGroup = new THREE.Group();
-busRig.add(busGroup);
-
-const cabinMass = new THREE.Group();
-busGroup.add(cabinMass);
+const bus = new THREE.Group();
+busRig.add(bus);
 
 const passengerRoot = new THREE.Group();
-busGroup.add(passengerRoot);
+bus.add(passengerRoot);
 
 const fxRoot = new THREE.Group();
 world.add(fxRoot);
 
 const maxPassengers = 150;
 const passengers = [];
-const roadSegments = [];
+const roadTiles = [];
 const laneMarks = [];
 const arrows = [];
 const speedLines = [];
-const massBlobs = [];
-const musicNotes = [];
+const notes = [];
+const pressureBlobs = [];
 
 let activeCount = 80;
 let nextCurve = 1;
@@ -146,73 +139,82 @@ requestAnimationFrame(tick);
 
 function buildPosterMarks() {
   const slash = new THREE.Group();
-  slash.position.set(4.45, 2.15, -4.5);
+  slash.position.set(4.6, 2.4, 2.2);
+  slash.rotation.y = -0.25;
   slash.rotation.z = -0.12;
   posterMarks.add(slash);
-  box(2.1, 0.55, 0.02, mat.pink, slash, 0, 0.7, 0);
-  box(4.3, 0.55, 0.02, mat.pink, slash, 0.1, -0.05, 0);
-  box(2.2, 0.55, 0.02, mat.pink, slash, -0.1, -0.78, 0);
+  box(2.0, 0.42, 0.04, mat.pink, slash, [0, 0.55, 0]);
+  box(4.2, 0.42, 0.04, mat.pink, slash, [0.15, -0.05, 0]);
+  box(2.1, 0.42, 0.04, mat.pink, slash, [-0.1, -0.65, 0]);
 
-  for (let i = 0; i < 34; i++) {
-    const spark = box(Math.random() * 0.06 + 0.02, Math.random() * 0.42 + 0.1, 0.02, mat.orange, posterMarks);
-    spark.position.set(THREE.MathUtils.randFloat(2.5, 7.7), THREE.MathUtils.randFloat(-3.35, -1.15), -4.3);
-    spark.rotation.z = THREE.MathUtils.randFloat(-1.1, 1.1);
+  for (let i = 0; i < 32; i++) {
+    const s = box(0.035, THREE.MathUtils.randFloat(0.16, 0.48), 0.035, mat.orange, posterMarks, [
+      THREE.MathUtils.randFloat(2.7, 7.3),
+      THREE.MathUtils.randFloat(-1.4, 1.3),
+      THREE.MathUtils.randFloat(2.2, 7.0)
+    ]);
+    s.rotation.set(THREE.MathUtils.randFloat(-0.6, 0.6), THREE.MathUtils.randFloat(-0.6, 0.6), THREE.MathUtils.randFloat(-1.1, 1.1));
   }
 }
 
 function buildRoad() {
-  roadRoot.position.y = 0;
-  for (let i = 0; i < 22; i++) {
-    const seg = box(9.8, 0.42, 0.02, mat.ink, roadRoot, 0, -3.25 + i * 0.16, -5);
-    roadSegments.push(seg);
-    const mark = box(0.9, 0.055, 0.03, mat.white, roadRoot, 0, -3.25 + i * 0.16, -4.96);
+  for (let i = 0; i < 30; i++) {
+    const z = -7 + i * 0.8;
+    const tile = box(9.5, 0.06, 0.82, mat.road, roadRoot, [0, -0.72, z]);
+    const mark = box(0.11, 0.07, 0.5, mat.white, roadRoot, [0, -0.66, z]);
+    roadTiles.push(tile);
     laneMarks.push(mark);
   }
 }
 
 function buildBus() {
-  busGroup.position.set(0, -0.1, 0);
+  bus.position.set(0, 0, 0);
 
-  box(6.25, 2.75, 0.08, mat.ink, busGroup, 0, 0.18, 0);
-  box(5.88, 2.42, 0.09, mat.bus, busGroup, 0, 0.25, 0.04);
-  box(6.15, 0.34, 0.1, mat.cyan, busGroup, 0, -1.0, 0.1);
-  box(5.25, 1.42, 0.1, mat.white, busGroup, 0, 0.25, 0.16);
-  box(4.95, 1.18, 0.1, mat.glass, busGroup, 0, 0.25, 0.19);
+  box(3.35, 0.18, 5.3, mat.ink, bus, [0, -0.52, 0]);
+  box(3.05, 0.2, 5.05, mat.cyan, bus, [0, -0.42, 0.02]);
+  box(3.25, 0.14, 5.15, mat.ink, bus, [0, -0.02, 0]);
+  box(2.96, 0.1, 4.86, mat.bus, bus, [0, 0.05, 0.02]);
 
-  box(0.18, 2.42, 0.12, mat.ink, busGroup, -2.95, 0.25, 0.23);
-  box(0.18, 2.42, 0.12, mat.ink, busGroup, 2.95, 0.25, 0.23);
-  box(5.8, 0.16, 0.12, mat.ink, busGroup, 0, 1.46, 0.23);
-  box(5.1, 0.12, 0.12, mat.ink, busGroup, 0, -0.48, 0.24);
+  box(0.18, 1.0, 4.85, mat.ink, bus, [-1.62, 0.25, 0.04]);
+  box(0.18, 1.0, 4.85, mat.ink, bus, [1.62, 0.25, 0.04]);
+  box(0.12, 0.82, 4.55, mat.bus, bus, [-1.47, 0.27, 0.05]);
+  box(0.12, 0.82, 4.55, mat.bus, bus, [1.47, 0.27, 0.05]);
 
-  for (const x of [-1.85, -0.62, 0.62, 1.85]) {
-    box(0.08, 1.22, 0.13, mat.white, busGroup, x, 0.25, 0.26);
+  box(3.12, 0.85, 0.16, mat.ink, bus, [0, 0.18, -2.6]);
+  box(3.12, 0.95, 0.16, mat.ink, bus, [0, 0.22, 2.6]);
+  box(2.4, 0.58, 0.12, mat.glass, bus, [0, 0.28, 2.68]);
+  box(2.15, 0.46, 0.13, mat.white, bus, [0, 0.3, 2.75]);
+
+  box(2.92, 0.08, 0.1, mat.ink, bus, [0, 1.12, -2.45]);
+  box(2.92, 0.08, 0.1, mat.ink, bus, [0, 1.12, 2.45]);
+  box(0.1, 0.08, 4.9, mat.ink, bus, [-1.5, 1.12, 0]);
+  box(0.1, 0.08, 4.9, mat.ink, bus, [1.5, 1.12, 0]);
+
+  for (const z of [-1.65, 1.65]) {
+    for (const x of [-1.78, 1.78]) {
+      cyl(0.35, 0.35, 0.28, mat.ink, bus, [x, -0.55, z], [0, 0, Math.PI / 2], 28);
+      cyl(0.17, 0.17, 0.3, mat.white, bus, [x, -0.55, z], [0, 0, Math.PI / 2], 20);
+    }
   }
 
-  box(1.55, 0.34, 0.12, mat.ink, busGroup, -1.2, -0.74, 0.25);
-  box(1.55, 0.34, 0.12, mat.ink, busGroup, 1.2, -0.74, 0.25);
-  box(1.2, 0.15, 0.13, mat.bus, busGroup, -1.2, -0.74, 0.28);
-  box(1.2, 0.15, 0.13, mat.bus, busGroup, 1.2, -0.74, 0.28);
-
-  for (const x of [-2.35, 2.35]) {
-    circle(0.5, mat.ink, busGroup, x, -1.22, 0.32);
-    circle(0.26, mat.white, busGroup, x, -1.22, 0.35);
-  }
+  box(2.1, 0.12, 0.42, mat.ink, bus, [0, -0.2, 2.72]);
+  box(1.65, 0.08, 0.16, mat.white, bus, [0, -0.18, 2.95]);
 }
 
 function buildPassengers() {
   for (let i = 0; i < maxPassengers; i++) {
     const area = pickArea(i);
     const group = new THREE.Group();
-    group.userData.parts = makePassengerShape(group, i);
+    group.userData.parts = makePassenger(group, i);
     group.userData.home = {
+      baseSide: makeBaseSide(i, area),
+      row: i % 18,
+      lane: Math.floor(i / 18),
+      phase: Math.random() * Math.PI * 2,
       xSeed: Math.random(),
       ySeed: Math.random(),
       zSeed: Math.random(),
-      phase: Math.random() * Math.PI * 2,
-      scale: THREE.MathUtils.randFloat(0.78, 1.12),
-      baseSide: makeBaseSide(i, area),
-      row: i % 14,
-      layer: Math.floor(i / 14)
+      scale: THREE.MathUtils.randFloat(0.78, 1.12)
     };
     passengerRoot.add(group);
     passengers.push({
@@ -226,69 +228,61 @@ function buildPassengers() {
   }
 }
 
-function makePassengerShape(parent, index) {
+function makePassenger(parent, index) {
   const parts = {};
-  const turbanMats = [mat.pink, mat.cyan, mat.orange, mat.white];
-  const turbanMat = turbanMats[index % turbanMats.length];
-  parts.shadow = circle(0.18, mat.ink, parent, 0, -0.35, -0.02, 1.15, 0.22);
-  parts.robe = capsule(mat.white, parent, 0, -0.03, 0.02, 1, 1.18);
-  parts.head = circle(0.11, mat.ink, parent, 0, 0.31, 0.05, 0.9, 1.08);
-  parts.turban = new THREE.Group();
-  parent.add(parts.turban);
-  parts.turban.position.set(0, 0.42, 0.06);
-  circle(0.12, turbanMat, parts.turban, 0, 0, 0, 1.25, 0.56);
-  box(0.21, 0.04, 0.01, mat.ink, parts.turban, 0.01, 0.01, 0.01).rotation.z = -0.25;
-  parts.armL = capsule(mat.ink, parent, -0.15, 0.02, 0.06, 0.42, 0.7);
-  parts.armR = capsule(mat.ink, parent, 0.15, 0.02, 0.06, 0.42, 0.7);
+  const turbanMat = [mat.pink, mat.cyan, mat.orange, mat.white][index % 4];
+  parts.body = cyl(0.11, 0.16, 0.42, mat.white, parent, [0, 0.22, 0], [0, 0, 0], 8);
+  parts.head = sphere(0.12, mat.ink, parent, [0, 0.53, 0]);
+  parts.turban = cyl(0.14, 0.14, 0.07, turbanMat, parent, [0, 0.64, 0], [Math.PI / 2, 0, 0], 16);
+  parts.armL = cyl(0.035, 0.035, 0.34, mat.ink, parent, [-0.14, 0.26, 0], [0.4, 0, -0.6], 8);
+  parts.armR = cyl(0.035, 0.035, 0.34, mat.ink, parent, [0.14, 0.26, 0], [0.4, 0, 0.6], 8);
   return parts;
 }
 
 function buildEffects() {
-  for (let i = 0; i < 6; i++) {
-    const blob = circle(0.72, i % 2 ? mat.white : mat.ink, cabinMass, 0, 0.34, 0.98, 1, 0.75);
+  for (let i = 0; i < 7; i++) {
+    const blob = sphere(0.45, i % 2 ? mat.white : mat.ink, fxRoot, [0, 0.25, 0], [1.4, 0.75, 1.0]);
     blob.visible = false;
-    massBlobs.push(blob);
+    pressureBlobs.push(blob);
   }
 
   for (let i = 0; i < 6; i++) {
     const arrow = new THREE.Group();
-    arrow.position.set(-2.2 + i * 0.9, 2.28, -1.2);
+    arrow.position.set(-1.9 + i * 0.75, 2.35, -0.7);
     fxRoot.add(arrow);
-    box(0.55, 0.15, 0.03, mat.pink, arrow, 0, 0, 0);
-    const head = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.34, 3), mat.pink);
-    head.position.set(0.36, 0, 0);
-    head.rotation.z = -Math.PI / 2;
-    arrow.add(head);
+    box(0.46, 0.12, 0.04, mat.pink, arrow, [0, 0, 0]);
+    const head = mesh(new THREE.ConeGeometry(0.16, 0.3, 3), mat.pink, arrow, [0.32, 0, 0], [0, 0, -Math.PI / 2]);
     arrows.push(arrow);
   }
 
   for (let i = 0; i < 10; i++) {
-    const line = box(1.4 + Math.random(), 0.07, 0.02, i % 2 ? mat.cyan : mat.pink, fxRoot);
-    line.position.set(THREE.MathUtils.randFloat(-8, 8), THREE.MathUtils.randFloat(-2.8, 2.6), -3.4);
-    line.rotation.z = THREE.MathUtils.randFloat(-0.22, 0.22);
+    const line = box(1.6 + Math.random() * 0.8, 0.06, 0.04, i % 2 ? mat.cyan : mat.pink, fxRoot, [
+      THREE.MathUtils.randFloat(-7, 7),
+      THREE.MathUtils.randFloat(-1.8, 2.8),
+      THREE.MathUtils.randFloat(-3, 5)
+    ]);
+    line.rotation.y = THREE.MathUtils.randFloat(-0.3, 0.3);
     speedLines.push(line);
   }
 
   for (let i = 0; i < 12; i++) {
     const note = new THREE.Group();
     const noteMat = i % 3 === 0 ? mat.pink : i % 3 === 1 ? mat.cyan : mat.orange;
-    circle(0.12, noteMat, note, 0, 0, 0, 1, 0.72);
-    box(0.05, 0.46, 0.02, noteMat, note, 0.12, 0.23, 0);
-    box(0.26, 0.05, 0.02, noteMat, note, 0.23, 0.44, 0);
-    note.position.set(THREE.MathUtils.randFloat(-3, 3), THREE.MathUtils.randFloat(1.2, 3.1), 2.7);
-    note.rotation.z = THREE.MathUtils.randFloat(-0.4, 0.4);
+    sphere(0.1, noteMat, note, [0, 0, 0], [1, 0.75, 1]);
+    box(0.04, 0.42, 0.04, noteMat, note, [0.12, 0.22, 0]);
+    box(0.25, 0.05, 0.04, noteMat, note, [0.23, 0.42, 0]);
+    note.position.set(THREE.MathUtils.randFloat(-2.7, 2.7), THREE.MathUtils.randFloat(1.4, 3.1), THREE.MathUtils.randFloat(-1.8, 1.7));
     note.visible = false;
     fxRoot.add(note);
-    musicNotes.push(note);
+    notes.push(note);
   }
 }
 
 function makeBaseSide(index, area) {
-  const row = index % 14;
-  const layer = Math.floor(index / 14);
-  const lane = (row / 13) * 2 - 1;
-  const stagger = (layer % 2 ? 0.08 : -0.08) + THREE.MathUtils.randFloatSpread(0.06);
-  const spread = area === 'cabin' ? 0.9 : area === 'window' ? 1.04 : area === 'roof' ? 0.92 : 1.0;
+  const row = index % 18;
+  const lane = (row / 17) * 2 - 1;
+  const stagger = (Math.floor(index / 18) % 2 ? 0.06 : -0.06) + THREE.MathUtils.randFloatSpread(0.05);
+  const spread = area === 'cabin' ? 0.86 : area === 'window' ? 1.05 : area === 'roof' ? 0.9 : 1.0;
   return THREE.MathUtils.clamp((lane + stagger) * spread, -1, 1);
 }
 
@@ -323,10 +317,10 @@ function resetTargets(randomize = false) {
     if (!p.active) return;
 
     const home = p.group.userData.home;
-    const push = p.area === 'cabin' ? 1.0 : p.area === 'window' ? 1.18 : p.area === 'roof' ? 1.35 : 1.48;
-    const crush = 1 - Math.abs(commandSide) * (0.48 + crowd * 0.2);
-    const disorder = THREE.MathUtils.mapLinear(crowd, 0.25, 1, 0.24, 0.09);
-    p.targetSide = THREE.MathUtils.clamp(home.baseSide * crush + commandSide * push + THREE.MathUtils.randFloatSpread(disorder), -1.85, 1.85);
+    const push = p.area === 'cabin' ? 1.02 : p.area === 'window' ? 1.18 : p.area === 'roof' ? 1.32 : 1.48;
+    const crush = 1 - Math.abs(commandSide) * (0.45 + crowd * 0.2);
+    const disorder = THREE.MathUtils.mapLinear(crowd, 0.25, 1, 0.24, 0.08);
+    p.targetSide = THREE.MathUtils.clamp(home.baseSide * crush - commandSide * push + THREE.MathUtils.randFloatSpread(disorder), -1.85, 1.85);
     if (randomize) p.side = home.baseSide + THREE.MathUtils.randFloatSpread(0.08);
   });
 }
@@ -341,7 +335,7 @@ function tick(now) {
   const com = calculateCOM();
   const stability = calculateStability(com);
   updateBus(com, stability, t);
-  updateRoad(t, dt);
+  updateRoad(dt);
   updateEffects(com, stability, t, dt);
   updateUI(com, stability, dt);
 
@@ -369,67 +363,57 @@ function updatePassengers(dt, t) {
     p.side = THREE.MathUtils.lerp(p.side, p.targetSide, 1 - Math.pow(0.035, dt));
     const home = p.group.userData.home;
     const sameSide = Math.max(0, Math.sign(commandSide) * p.side);
-    const squeeze = Math.max(0, Math.abs(p.side) - 0.65) * crowd;
+    const squeeze = Math.max(0, Math.abs(p.side) - 0.62) * crowd;
     const pile = sameSide * Math.abs(commandSide) * crowd;
     p.group.position.copy(passengerPosition(p, home, pile, squeeze, t));
 
-    const movingLean = THREE.MathUtils.clamp((p.targetSide - p.side) * -0.52, -0.6, 0.6);
-    const dance = danceMode ? Math.sin(t * 12 + home.phase) * 0.32 : 0;
-    p.group.rotation.z = movingLean + Math.sin(t * 5 + home.phase) * 0.035 + dance;
-    p.group.scale.set(
-      home.scale * (1 - squeeze * 0.14),
-      home.scale * (1 + squeeze * 0.25 + (danceMode ? Math.sin(t * 10 + home.phase) * 0.08 : 0)),
-      home.scale
-    );
+    const slideLean = THREE.MathUtils.clamp((p.targetSide - p.side) * -0.5, -0.65, 0.65);
+    const dance = danceMode ? Math.sin(t * 12 + home.phase) * 0.28 : 0;
+    p.group.rotation.z = slideLean + dance;
+    p.group.rotation.y = Math.sin(t * 3 + home.phase) * 0.08;
+    p.group.scale.setScalar(home.scale * (1 + squeeze * 0.12));
 
     const parts = p.group.userData.parts;
-    const armWave = Math.sin(t * (danceMode ? 13 : 8) + home.phase) * (danceMode ? 0.9 : 0.3);
-    parts.armL.rotation.z = 0.65 + armWave + commandSide * 0.35;
-    parts.armR.rotation.z = -0.65 - armWave + commandSide * 0.35;
-    if (p.area === 'side' || Math.abs(p.side) > 1.35) {
-      parts.armL.rotation.z = 1.55 + armWave * 0.45;
-      parts.armR.rotation.z = -1.55 - armWave * 0.45;
-    }
+    const wave = Math.sin(t * (danceMode ? 13 : 8) + home.phase) * (danceMode ? 0.9 : 0.25);
+    parts.armL.rotation.z = -0.65 + wave + commandSide * 0.4;
+    parts.armR.rotation.z = 0.65 - wave + commandSide * 0.4;
   }
 }
 
 function passengerPosition(p, home, pile, squeeze, t) {
-  let x = p.side * 1.42 + (home.xSeed - 0.5) * 0.16;
-  let y = -0.35 + (home.layer % 4) * 0.25 + (home.ySeed - 0.5) * 0.12;
-  let z = 2.08 + (home.row % 5) * 0.015 + home.zSeed * 0.03;
+  let x = p.side * 1.12 + (home.xSeed - 0.5) * 0.13;
+  let y = -0.18 + (home.lane % 4) * 0.17 + (home.ySeed - 0.5) * 0.08;
+  let z = -1.75 + (home.row % 9) * 0.42 + (home.zSeed - 0.5) * 0.14;
 
-  if (p.area === 'cabin') {
-    y = THREE.MathUtils.clamp(y, -0.42, 0.9) + pile * 0.2;
-  } else if (p.area === 'window') {
-    x = p.side * 1.62 + (home.xSeed - 0.5) * 0.2;
-    y = 0.08 + home.ySeed * 0.95 + pile * 0.33;
-    z = 2.16 + squeeze * 0.08;
+  if (p.area === 'window') {
+    x = p.side * 1.35 + Math.sign(p.side || commandSide || 1) * 0.18;
+    y = 0.08 + home.ySeed * 0.7 + pile * 0.22;
   } else if (p.area === 'roof') {
-    x = p.side * 1.72 + (home.xSeed - 0.5) * 0.28;
-    y = 1.45 + (home.layer % 5) * 0.22 + home.ySeed * 0.18 + pile * 0.48;
-    z = 2.2 + home.zSeed * 0.08;
-  } else {
+    x = p.side * 1.2 + (home.xSeed - 0.5) * 0.22;
+    y = 1.02 + (home.lane % 5) * 0.13 + home.ySeed * 0.16 + pile * 0.42;
+    z = -1.95 + (home.row % 10) * 0.42 + home.zSeed * 0.1;
+  } else if (p.area === 'side') {
     const sideSign = p.side === 0 ? Math.sign(commandSide || 1) : Math.sign(p.side);
-    x = sideSign * (2.9 + home.xSeed * 0.45 + squeeze * 0.2);
-    y = -0.35 + home.ySeed * 1.3 + pile * 0.18;
-    z = 2.25 + home.zSeed * 0.08;
+    x = sideSign * (1.78 + home.xSeed * 0.32 + squeeze * 0.16);
+    y = -0.18 + home.ySeed * 0.95 + pile * 0.14;
+    z = -1.95 + (home.row % 10) * 0.43 + home.zSeed * 0.12;
   }
 
   x += Math.sign(commandSide) * squeeze * 0.22;
-  y += Math.sin(t * 8 + home.phase) * (danceMode ? 0.055 : 0.014);
+  y += Math.sin(t * 8 + home.phase) * (danceMode ? 0.055 : 0.012);
   return new THREE.Vector3(x, y, z);
 }
 
 function calculateCOM() {
-  let total = 66;
+  let total = 68;
   let x = 0;
-  let y = 0.16 * total;
+  let y = 0.1 * total;
   let roofCount = 0;
   for (const p of passengers) {
     if (!p.active) continue;
     const pos = p.group.position;
     total += p.weight;
-    x += pos.x * p.weight;
+    x += -pos.x * p.weight;
     y += pos.y * p.weight;
     if (p.area === 'roof') roofCount += 1;
   }
@@ -437,78 +421,79 @@ function calculateCOM() {
 }
 
 function calculateStability(com) {
-  const desired = nextCurve * 0.72;
-  const horizontal = 1 - Math.min(1, Math.abs(desired - com.x) / 1.6);
-  const highPenalty = Math.max(0, com.y - 0.88) * 0.34 + com.roofRatio * 0.17;
+  const desired = nextCurve * 0.58;
+  const horizontal = 1 - Math.min(1, Math.abs(desired - com.x) / 1.35);
+  const highPenalty = Math.max(0, com.y - 0.72) * 0.36 + com.roofRatio * 0.16;
   const overloadPenalty = Math.max(0, activeCount - 130) / 260;
   return Math.round(THREE.MathUtils.clamp(horizontal - highPenalty - overloadPenalty, 0, 1) * 100);
 }
 
 function updateBus(com, stability, t) {
-  const lean = -com.x * 0.24 + nextCurve * 0.04 + Math.sin(t * 8) * 0.006;
-  const panicLift = stability < 36 ? (36 - stability) / 36 : 0;
-  busRig.rotation.z = THREE.MathUtils.lerp(busRig.rotation.z, lean + nextCurve * panicLift * 0.12, 0.15);
-  busRig.position.y = -Math.abs(com.x) * 0.12 + panicLift * 0.08 + Math.sin(t * 14) * 0.01;
-  busRig.position.x = resultFlash * THREE.MathUtils.randFloatSpread(0.035);
+  const roll = -com.x * 0.28 + nextCurve * 0.04 + Math.sin(t * 8) * 0.006;
+  const danger = stability < 36 ? (36 - stability) / 36 : 0;
+  busRig.rotation.z = THREE.MathUtils.lerp(busRig.rotation.z, roll + nextCurve * danger * 0.1, 0.15);
+  busRig.rotation.x = Math.sin(t * 7) * 0.01;
+  busRig.position.y = -Math.abs(com.x) * 0.08 + danger * 0.06 + Math.sin(t * 14) * 0.01;
+  busRig.position.x = resultFlash * THREE.MathUtils.randFloatSpread(0.03);
 }
 
-function updateRoad(t, dt) {
-  const speed = (2.4 + activeCount * 0.034) * speedLevel;
-  for (let i = 0; i < roadSegments.length; i++) {
-    const seg = roadSegments[i];
+function updateRoad(dt) {
+  const speed = (2.6 + activeCount * 0.034) * speedLevel;
+  for (let i = 0; i < roadTiles.length; i++) {
+    const tile = roadTiles[i];
     const mark = laneMarks[i];
-    seg.position.y += dt * speed * 0.13;
-    mark.position.y = seg.position.y;
-    if (seg.position.y > -0.05) seg.position.y -= roadSegments.length * 0.16;
-
-    const depth = THREE.MathUtils.mapLinear(seg.position.y, -3.3, -0.05, 1, 0);
-    const curve = nextCurve * Math.pow(Math.max(0, 1 - depth), 1.45) * 3.1;
-    seg.position.x = curve;
-    mark.position.x = curve;
-    seg.scale.x = THREE.MathUtils.clamp(0.62 + depth * 0.42, 0.62, 1.08);
+    tile.position.z -= dt * speed;
+    if (tile.position.z < -8) tile.position.z += 24;
+    const curve = roadCurveX(tile.position.z);
+    tile.position.x = curve;
+    mark.position.set(curve, -0.64, tile.position.z);
     mark.visible = i % 2 === 0;
+    tile.scale.x = THREE.MathUtils.clamp(1.0 - Math.max(0, tile.position.z - 5) * 0.035, 0.64, 1.05);
   }
+}
+
+function roadCurveX(z) {
+  const far = THREE.MathUtils.clamp((z - 1.8) / 10.5, 0, 1);
+  return nextCurve * far * far * 5.2;
 }
 
 function updateEffects(com, stability, t, dt) {
-  const crowd = activeCount / maxPassengers;
   const side = Math.sign(com.x || commandSide || nextCurve);
-  const pressure = THREE.MathUtils.clamp(Math.abs(com.x) * 0.6 + Math.abs(commandSide) * 0.5, 0, 1.25);
-  for (let i = 0; i < massBlobs.length; i++) {
-    const blob = massBlobs[i];
-    blob.visible = pressure > 0.18;
-    blob.position.x = side * (0.45 + i * 0.19) + Math.sin(t * 5 + i) * 0.03;
-    blob.position.y = 0.12 + (i % 3) * 0.28 + pressure * 0.22;
-    blob.position.z = 1.96 + i * 0.012;
-    blob.scale.set(1.2 + pressure * 1.25 - i * 0.08, 0.58 + pressure * 0.42, 1);
+  const pressure = THREE.MathUtils.clamp(Math.abs(com.x) * 0.75 + Math.abs(commandSide) * 0.5, 0, 1.25);
+  for (let i = 0; i < pressureBlobs.length; i++) {
+    const blob = pressureBlobs[i];
+    blob.visible = pressure > 0.16;
+    blob.position.set(side * (0.25 + i * 0.16), 0.08 + (i % 3) * 0.18 + pressure * 0.15, -1.2 + i * 0.45);
+    blob.scale.set(1.0 + pressure * 1.15 - i * 0.05, 0.42 + pressure * 0.35, 0.78);
   }
 
-  for (const arrow of arrows) {
-    arrow.scale.x = nextCurve;
-    arrow.position.x = nextCurve * (0.25 + Math.abs(arrow.position.x));
+  for (let i = 0; i < arrows.length; i++) {
+    const arrow = arrows[i];
+    arrow.scale.x = -nextCurve;
+    arrow.position.x = nextCurve * (0.7 + i * 0.38);
+    arrow.position.y = 2.35 + Math.sin(t * 8 + i) * 0.03;
   }
 
   const showSpeed = speedLevel > 1.08 || resultFlash > 0 || danceMode;
-  for (let i = 0; i < speedLines.length; i++) {
-    const line = speedLines[i];
+  for (const line of speedLines) {
     line.visible = showSpeed;
-    line.position.x -= dt * (4 + activeCount * 0.035);
-    if (line.position.x < -9.5) {
-      line.position.x = 9.4;
-      line.position.y = THREE.MathUtils.randFloat(-2.5, 2.6);
+    line.position.z -= dt * (5 + activeCount * 0.035);
+    if (line.position.z < -6) {
+      line.position.z = 8;
+      line.position.x = THREE.MathUtils.randFloat(-6.5, 6.5);
+      line.position.y = THREE.MathUtils.randFloat(-1.6, 2.8);
     }
   }
 
-  for (let i = 0; i < musicNotes.length; i++) {
-    const note = musicNotes[i];
+  for (let i = 0; i < notes.length; i++) {
+    const note = notes[i];
     note.visible = danceMode;
     if (!danceMode) continue;
     note.position.y += dt * (0.55 + i * 0.02);
     note.position.x += Math.sin(t * 2.3 + i) * dt * 0.5;
-    note.rotation.z = Math.sin(t * 3 + i) * 0.45;
-    if (note.position.y > 3.5) {
-      note.position.y = THREE.MathUtils.randFloat(1.15, 1.8);
-      note.position.x = THREE.MathUtils.randFloat(-3.2, 3.2);
+    if (note.position.y > 3.4) {
+      note.position.y = THREE.MathUtils.randFloat(1.2, 1.8);
+      note.position.x = THREE.MathUtils.randFloat(-2.8, 2.8);
     }
   }
 
@@ -524,8 +509,8 @@ function updateUI(com, stability, dt) {
   ui.loadRate.textContent = Math.round(activeCount / 40 * 100);
   ui.speedText.textContent = speedLevel.toFixed(1);
   ui.stabilityText.textContent = `${stability}%`;
-  ui.comNeedle.style.left = `${THREE.MathUtils.clamp(50 + com.x * 21, 5, 95)}%`;
-  ui.targetNeedle.style.left = `${nextCurve > 0 ? 65 : 35}%`;
+  ui.comNeedle.style.left = `${THREE.MathUtils.clamp(50 + com.x * 28, 5, 95)}%`;
+  ui.targetNeedle.style.left = `${nextCurve > 0 ? 66 : 34}%`;
 
   if (stampHold > 0) {
     stampHold -= dt;
@@ -594,7 +579,7 @@ function showStamp(text, danger) {
 
 function resize() {
   const aspect = window.innerWidth / window.innerHeight;
-  const viewH = aspect < 1 ? 10.8 : 9.2;
+  const viewH = aspect < 1 ? 10.6 : 8.9;
   camera.top = viewH / 2;
   camera.bottom = -viewH / 2;
   camera.left = -viewH * aspect / 2;
