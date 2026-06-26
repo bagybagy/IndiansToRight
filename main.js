@@ -96,6 +96,9 @@ const notes = [];
 
 let activeCount = 80;
 let nextCurve = 1;
+let currentCurve = 0;
+let curvePhase = 0;
+const curveDuration = 1.35;
 let commandSide = 0;
 let passengerCommand = 0;
 let speedLevel = 1;
@@ -269,6 +272,8 @@ function pickArea(index) {
 function resetGame() {
   activeCount = 80;
   nextCurve = 1;
+  currentCurve = 0;
+  curvePhase = 0;
   commandSide = 0;
   passengerCommand = 0;
   speedLevel = 1;
@@ -310,14 +315,20 @@ function tick(now) {
   updateInput(dt);
   updatePassengers(dt, t);
   const com = calculateCOM();
-  const stability = calculateStability(com);
+  const curveStrength = getCurveStrength();
+  const stability = calculateStability(com, curvePhase > 0 ? currentCurve : nextCurve, curveStrength);
   updateBus(com, stability, t, dt);
   updateRoad(dt);
   updateEffects(com, stability, t, dt);
   updateUI(com, stability, dt);
 
-  roundTimer -= dt * (danceMode ? 1.45 : 1);
-  if (roundTimer <= 0) judgeCurve(false);
+  if (curvePhase > 0) {
+    curvePhase = Math.max(0, curvePhase - dt);
+    if (curvePhase === 0) currentCurve = 0;
+  } else {
+    roundTimer -= dt * (danceMode ? 1.45 : 1);
+    if (roundTimer <= 0) judgeCurve(false);
+  }
 
   renderer.render(scene, camera);
   requestAnimationFrame(tick);
@@ -398,26 +409,31 @@ function calculateCOM() {
   return { x: x / total, y: y / total, roofRatio: roofCount / Math.max(1, activeCount) };
 }
 
-function calculateStability(com) {
-  const desired = nextCurve * 0.48;
+function calculateStability(com, curveDir = nextCurve, curveStrength = 0) {
+  const desired = curveDir * (0.44 + curveStrength * 0.12);
   const alignmentError = Math.abs(desired - com.x);
   const horizontal = 1 - Math.min(1, alignmentError / 1.0);
-  const overLeanPenalty = Math.max(0, Math.abs(com.x) - 0.5) * 1.45;
+  const overLeanPenalty = Math.max(0, Math.abs(com.x) - 0.46) * (1.55 + curveStrength * 1.25);
+  const centrifugalPenalty = curveStrength * Math.max(0, -Math.sign(com.x || 1) * curveDir) * 0.28;
   const highPenalty = Math.max(0, com.y - 0.72) * 0.36 + com.roofRatio * 0.16;
   const overloadPenalty = Math.max(0, activeCount - 130) / 260;
-  return Math.round(THREE.MathUtils.clamp(horizontal - highPenalty - overloadPenalty - overLeanPenalty, 0, 1) * 100);
+  return Math.round(THREE.MathUtils.clamp(horizontal - highPenalty - overloadPenalty - overLeanPenalty - centrifugalPenalty, 0, 1) * 100);
 }
 
 function updateBus(com, stability, t, dt) {
-  const desired = nextCurve * 0.48;
-  const overLean = Math.max(0, Math.abs(com.x) - 0.5);
-  const wrongSide = Math.sign(com.x || 1) !== nextCurve ? Math.min(1, Math.abs(com.x) * 1.2) : 0;
+  const curveStrength = getCurveStrength();
+  const curveDir = curvePhase > 0 ? currentCurve : nextCurve;
+  const desired = curveDir * (0.44 + curveStrength * 0.12);
+  const overLean = Math.max(0, Math.abs(com.x) - 0.46);
+  const wrongSide = Math.sign(com.x || 1) !== curveDir ? Math.min(1, Math.abs(com.x) * 1.2) : 0;
   const danger = Math.max(stability < 42 ? (42 - stability) / 42 : 0, overLean * 1.4, wrongSide * 0.65);
-  const targetRoll = com.x * 0.36 + nextCurve * 0.04 + Math.sin(t * 8) * 0.006;
+  const weightRoll = com.x * 0.36;
+  const centrifugalRoll = -curveDir * curveStrength * 0.34;
+  const targetRoll = weightRoll + centrifugalRoll + Math.sin(t * 8) * 0.006;
   const spring = (targetRoll - busRoll) * (10 + danger * 12);
   rollVelocity += spring * dt;
   rollVelocity *= Math.pow(0.56 - Math.min(0.22, danger * 0.12), dt);
-  rollVelocity += Math.sign(targetRoll || nextCurve) * danger * dt * 0.8;
+  rollVelocity += Math.sign(targetRoll || curveDir) * danger * dt * 0.8;
   busRoll += rollVelocity * dt;
   busRoll = THREE.MathUtils.clamp(busRoll, -0.62, 0.62);
 
@@ -444,6 +460,12 @@ function updateRoad(dt) {
   }
 }
 
+function getCurveStrength() {
+  if (curvePhase <= 0) return 0;
+  const progress = 1 - curvePhase / curveDuration;
+  return Math.sin(progress * Math.PI);
+}
+
 function rebuildRoadGeometry() {
   const verts = [];
   const indices = [];
@@ -468,15 +490,18 @@ function rebuildRoadGeometry() {
 }
 
 function roadCurveX(z) {
+  const strength = getCurveStrength();
+  if (strength <= 0) return 0;
   const far = THREE.MathUtils.clamp((z - 1.8) / 10.5, 0, 1);
-  return nextCurve * far * far * (3 - 2 * far) * 5.2;
+  return currentCurve * strength * far * far * (3 - 2 * far) * 5.2;
 }
 
 function updateEffects(com, stability, t, dt) {
+  const displayCurve = curvePhase > 0 ? currentCurve : nextCurve;
   for (let i = 0; i < arrows.length; i++) {
     const arrow = arrows[i];
-    arrow.scale.x = -nextCurve;
-    arrow.position.x = nextCurve * (0.7 + i * 0.38);
+    arrow.scale.x = -displayCurve;
+    arrow.position.x = displayCurve * (0.7 + i * 0.38);
     arrow.position.y = 2.35 + Math.sin(t * 8 + i) * 0.03;
   }
 
@@ -496,16 +521,17 @@ function updateEffects(com, stability, t, dt) {
 }
 
 function updateUI(com, stability, dt) {
-  const sideText = nextCurve > 0 ? '右' : '左';
+  const displayCurve = curvePhase > 0 ? currentCurve : nextCurve;
+  const sideText = displayCurve > 0 ? '右' : '左';
   ui.titleSide.textContent = sideText;
   ui.curveText.textContent = sideText;
-  ui.curveCard.classList.toggle('left', nextCurve < 0);
+  ui.curveCard.classList.toggle('left', displayCurve < 0);
   ui.passengerCount.textContent = activeCount;
   ui.loadRate.textContent = Math.round(activeCount / 40 * 100);
   ui.speedText.textContent = speedLevel.toFixed(1);
   ui.stabilityText.textContent = `${stability}%`;
   ui.comNeedle.style.left = `${THREE.MathUtils.clamp(50 + com.x * 28, 5, 95)}%`;
-  ui.targetNeedle.style.left = `${nextCurve > 0 ? 66 : 34}%`;
+  ui.targetNeedle.style.left = `${displayCurve > 0 ? 66 : 34}%`;
 
   if (stampHold > 0) {
     stampHold -= dt;
@@ -519,6 +545,8 @@ function updateUI(com, stability, dt) {
 
   if (danceMode) {
     ui.message.textContent = '満員！屋根まで踊ってスピードアップ！';
+  } else if (curvePhase > 0) {
+    ui.message.textContent = `${sideText}カーブ突入！遠心力に耐えろ！`;
   } else {
     ui.message.textContent = `${sideText}カーブまで ${Math.max(0, Math.ceil(roundTimer))} 秒。車内の${sideText}へ押せ！`;
   }
@@ -526,9 +554,13 @@ function updateUI(com, stability, dt) {
 
 function judgeCurve(manual) {
   const com = calculateCOM();
-  const stability = calculateStability(com);
+  if (curvePhase > 0) return;
+  const curveDir = nextCurve;
+  const stability = calculateStability(com, curveDir, 1);
   const success = stability >= 58;
-  const sideText = nextCurve > 0 ? '右' : '左';
+  const sideText = curveDir > 0 ? '右' : '左';
+  currentCurve = curveDir;
+  curvePhase = curveDuration;
   if (success) {
     const gain = 7 + Math.floor(Math.random() * 10);
     activeCount = Math.min(maxPassengers, activeCount + gain);
@@ -541,7 +573,7 @@ function judgeCurve(manual) {
     activeCount = Math.max(36, activeCount - loss);
     speedLevel = Math.max(1, speedLevel - 0.18);
     danceMode = false;
-    const reason = Math.sign(com.x || 1) === nextCurve ? '寄せすぎて片輪走行！' : '重心が逆！';
+    const reason = Math.sign(com.x || 1) === curveDir ? '寄せすぎて片輪走行！' : '重心が逆！';
     setMessage(`${reason} 危ないので ${loss}人 降車`, 2.4);
     showStamp('危険', true);
   }
