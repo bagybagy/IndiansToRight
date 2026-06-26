@@ -1,0 +1,5 @@
+_prototype_extract/
+node_modules/
+artifacts-*.png
+.DS_Store
+Thumbs.db

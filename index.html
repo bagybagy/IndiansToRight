@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>インド人を右に！</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="scene" aria-label="インド人を右に！ game scene"></canvas>
+
+  <main id="hud">
+    <section class="brand">
+      <p class="kicker">群衆重心ギャグドライブ</p>
+      <h1>インド人を<span id="titleSide">右</span>に！</h1>
+    </section>
+
+    <section class="status">
+      <div class="curve-card" id="curveCard">
+        <span>次のカーブ</span>
+        <strong id="curveText">右</strong>
+      </div>
+
+      <div class="stats">
+        <label>乗客 <strong id="passengerCount">80</strong>人</label>
+        <label>乗車率 <strong id="loadRate">200</strong>%</label>
+        <label>速度 <strong id="speedText">1.0</strong>x</label>
+      </div>
+
+      <div class="meter-block">
+        <div class="meter-labels"><span>左</span><span>重心</span><span>右</span></div>
+        <div class="meter"><i></i><b id="comNeedle"></b></div>
+      </div>
+
+      <div class="stability">
+        <span>安定度</span>
+        <strong id="stabilityText">--</strong>
+      </div>
+    </section>
+
+    <section class="controls">
+      <span>← / A</span>
+      <b>乗客を左へ押す</b>
+      <span>→ / D</span>
+      <b>乗客を右へ押す</b>
+      <span>Space</span>
+      <b>カーブ判定</b>
+      <span>R</span>
+      <b>リセット</b>
+    </section>
+  </main>
+
+  <div id="message">右カーブだ。インド人を右に！</div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
