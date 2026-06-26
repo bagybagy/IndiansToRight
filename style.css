@@ -248,6 +248,48 @@ h1 span {
   pointer-events: none;
 }
 
+#resultStamp {
+  position: fixed;
+  left: 50%;
+  top: 48%;
+  z-index: 7;
+  display: none;
+  transform: translate(-50%, -50%) rotate(-6deg);
+  padding: 8px 24px 14px;
+  background: var(--pink);
+  color: #fff;
+  border: 7px solid var(--ink);
+  box-shadow: 9px 9px 0 rgba(0, 0, 0, .24);
+  font-size: clamp(64px, 12vw, 170px);
+  font-weight: 1000;
+  line-height: .85;
+  pointer-events: none;
+}
+
+#resultStamp.show {
+  display: block;
+  animation: stamp-pop .55s cubic-bezier(.16, 1.25, .24, 1) both;
+}
+
+#resultStamp.danger {
+  background: var(--cyan);
+}
+
+@keyframes stamp-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(.55) rotate(-14deg);
+  }
+  72% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.08) rotate(-4deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1) rotate(-6deg);
+  }
+}
+
 @media (max-width: 820px) {
   #hud {
     inset: 12px 12px auto 12px;

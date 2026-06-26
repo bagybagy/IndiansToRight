@@ -96,6 +96,7 @@ const laneMarks = [];
 const arrows = [];
 const speedLines = [];
 const massBlobs = [];
+const musicNotes = [];
 
 let activeCount = 80;
 let nextCurve = 1;
@@ -105,6 +106,7 @@ let danceMode = false;
 let resultFlash = 0;
 let roundTimer = 7.5;
 let messageHold = 0;
+let stampHold = 0;
 let last = performance.now();
 
 const keys = new Set();
@@ -127,7 +129,8 @@ const ui = {
   comNeedle: document.querySelector('#comNeedle'),
   targetNeedle: document.querySelector('#targetNeedle'),
   stabilityText: document.querySelector('#stabilityText'),
-  message: document.querySelector('#message')
+  message: document.querySelector('#message'),
+  stamp: document.querySelector('#resultStamp')
 };
 
 window.addEventListener('keydown', (event) => {
@@ -264,6 +267,19 @@ function buildEffects() {
     line.position.set(THREE.MathUtils.randFloat(-8, 8), THREE.MathUtils.randFloat(-2.8, 2.6), -3.4);
     line.rotation.z = THREE.MathUtils.randFloat(-0.22, 0.22);
     speedLines.push(line);
+  }
+
+  for (let i = 0; i < 12; i++) {
+    const note = new THREE.Group();
+    const noteMat = i % 3 === 0 ? mat.pink : i % 3 === 1 ? mat.cyan : mat.orange;
+    circle(0.12, noteMat, note, 0, 0, 0, 1, 0.72);
+    box(0.05, 0.46, 0.02, noteMat, note, 0.12, 0.23, 0);
+    box(0.26, 0.05, 0.02, noteMat, note, 0.23, 0.44, 0);
+    note.position.set(THREE.MathUtils.randFloat(-3, 3), THREE.MathUtils.randFloat(1.2, 3.1), 2.7);
+    note.rotation.z = THREE.MathUtils.randFloat(-0.4, 0.4);
+    note.visible = false;
+    fxRoot.add(note);
+    musicNotes.push(note);
   }
 }
 
@@ -483,6 +499,19 @@ function updateEffects(com, stability, t, dt) {
     }
   }
 
+  for (let i = 0; i < musicNotes.length; i++) {
+    const note = musicNotes[i];
+    note.visible = danceMode;
+    if (!danceMode) continue;
+    note.position.y += dt * (0.55 + i * 0.02);
+    note.position.x += Math.sin(t * 2.3 + i) * dt * 0.5;
+    note.rotation.z = Math.sin(t * 3 + i) * 0.45;
+    if (note.position.y > 3.5) {
+      note.position.y = THREE.MathUtils.randFloat(1.15, 1.8);
+      note.position.x = THREE.MathUtils.randFloat(-3.2, 3.2);
+    }
+  }
+
   resultFlash = Math.max(0, resultFlash - dt * 1.8);
 }
 
@@ -497,6 +526,11 @@ function updateUI(com, stability, dt) {
   ui.stabilityText.textContent = `${stability}%`;
   ui.comNeedle.style.left = `${THREE.MathUtils.clamp(50 + com.x * 21, 5, 95)}%`;
   ui.targetNeedle.style.left = `${nextCurve > 0 ? 65 : 35}%`;
+
+  if (stampHold > 0) {
+    stampHold -= dt;
+    if (stampHold <= 0) ui.stamp.classList.remove('show');
+  }
 
   if (messageHold > 0) {
     messageHold -= dt;
@@ -520,12 +554,14 @@ function judgeCurve(manual) {
     speedLevel = activeCount >= 135 ? Math.min(2.05, speedLevel + 0.18) : Math.min(1.55, speedLevel + 0.07);
     danceMode = activeCount >= 135;
     setMessage(`${sideText}へ重心が乗った！成功、乗客 +${gain}人`, 2.1);
+    showStamp('成功', false);
   } else {
     const loss = 10 + Math.floor(Math.random() * 18);
     activeCount = Math.max(36, activeCount - loss);
     speedLevel = Math.max(1, speedLevel - 0.18);
     danceMode = false;
     setMessage(`重心が逆！危ないので ${loss}人 降車`, 2.4);
+    showStamp('危険', true);
   }
 
   nextCurve *= -1;
@@ -545,6 +581,15 @@ function redistributeOverflow() {
 function setMessage(text, hold) {
   ui.message.textContent = text;
   messageHold = hold;
+}
+
+function showStamp(text, danger) {
+  ui.stamp.textContent = text;
+  ui.stamp.classList.toggle('danger', danger);
+  ui.stamp.classList.remove('show');
+  void ui.stamp.offsetWidth;
+  ui.stamp.classList.add('show');
+  stampHold = 0.9;
 }
 
 function resize() {
