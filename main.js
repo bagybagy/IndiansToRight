@@ -37,7 +37,7 @@ const mat = {
 };
 
 function basic(color) {
-  return new THREE.MeshBasicMaterial({ color, toneMapped: false });
+  return new THREE.MeshBasicMaterial({ color, toneMapped: false, side: THREE.DoubleSide });
 }
 
 function mesh(geo, material, parent, pos = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1]) {
@@ -67,9 +67,6 @@ scene.add(world);
 const roadRoot = new THREE.Group();
 world.add(roadRoot);
 
-const posterMarks = new THREE.Group();
-world.add(posterMarks);
-
 const busRig = new THREE.Group();
 world.add(busRig);
 
@@ -84,27 +81,29 @@ world.add(fxRoot);
 
 const maxPassengers = 150;
 const passengers = [];
-const roadTiles = [];
+let roadMesh;
 const laneMarks = [];
 const arrows = [];
-const speedLines = [];
 const notes = [];
-const pressureBlobs = [];
 
 let activeCount = 80;
 let nextCurve = 1;
 let commandSide = 0;
+let passengerCommand = 0;
 let speedLevel = 1;
 let danceMode = false;
 let resultFlash = 0;
 let roundTimer = 7.5;
 let messageHold = 0;
 let stampHold = 0;
+let busRoll = 0;
+let rollVelocity = 0;
+let lateralDrift = 0;
+let roadScroll = 0;
 let last = performance.now();
 
 const keys = new Set();
 
-buildPosterMarks();
 buildRoad();
 buildBus();
 buildPassengers();
@@ -137,34 +136,14 @@ window.addEventListener('keyup', (event) => keys.delete(event.code));
 window.addEventListener('resize', resize);
 requestAnimationFrame(tick);
 
-function buildPosterMarks() {
-  const slash = new THREE.Group();
-  slash.position.set(4.6, 2.4, 2.2);
-  slash.rotation.y = -0.25;
-  slash.rotation.z = -0.12;
-  posterMarks.add(slash);
-  box(2.0, 0.42, 0.04, mat.pink, slash, [0, 0.55, 0]);
-  box(4.2, 0.42, 0.04, mat.pink, slash, [0.15, -0.05, 0]);
-  box(2.1, 0.42, 0.04, mat.pink, slash, [-0.1, -0.65, 0]);
-
-  for (let i = 0; i < 32; i++) {
-    const s = box(0.035, THREE.MathUtils.randFloat(0.16, 0.48), 0.035, mat.orange, posterMarks, [
-      THREE.MathUtils.randFloat(2.7, 7.3),
-      THREE.MathUtils.randFloat(-1.4, 1.3),
-      THREE.MathUtils.randFloat(2.2, 7.0)
-    ]);
-    s.rotation.set(THREE.MathUtils.randFloat(-0.6, 0.6), THREE.MathUtils.randFloat(-0.6, 0.6), THREE.MathUtils.randFloat(-1.1, 1.1));
-  }
-}
-
 function buildRoad() {
-  for (let i = 0; i < 30; i++) {
-    const z = -7 + i * 0.8;
-    const tile = box(9.5, 0.06, 0.82, mat.road, roadRoot, [0, -0.72, z]);
-    const mark = box(0.11, 0.07, 0.5, mat.white, roadRoot, [0, -0.66, z]);
-    roadTiles.push(tile);
+  roadMesh = mesh(new THREE.BufferGeometry(), mat.road, roadRoot);
+  roadMesh.position.y = -0.72;
+  for (let i = 0; i < 26; i++) {
+    const mark = box(0.11, 0.07, 0.5, mat.white, roadRoot, [0, -0.64, -7 + i * 0.8]);
     laneMarks.push(mark);
   }
+  rebuildRoadGeometry();
 }
 
 function buildBus() {
@@ -240,12 +219,6 @@ function makePassenger(parent, index) {
 }
 
 function buildEffects() {
-  for (let i = 0; i < 7; i++) {
-    const blob = sphere(0.45, i % 2 ? mat.white : mat.ink, fxRoot, [0, 0.25, 0], [1.4, 0.75, 1.0]);
-    blob.visible = false;
-    pressureBlobs.push(blob);
-  }
-
   for (let i = 0; i < 6; i++) {
     const arrow = new THREE.Group();
     arrow.position.set(-1.9 + i * 0.75, 2.35, -0.7);
@@ -253,16 +226,6 @@ function buildEffects() {
     box(0.46, 0.12, 0.04, mat.pink, arrow, [0, 0, 0]);
     const head = mesh(new THREE.ConeGeometry(0.16, 0.3, 3), mat.pink, arrow, [0.32, 0, 0], [0, 0, -Math.PI / 2]);
     arrows.push(arrow);
-  }
-
-  for (let i = 0; i < 10; i++) {
-    const line = box(1.6 + Math.random() * 0.8, 0.06, 0.04, i % 2 ? mat.cyan : mat.pink, fxRoot, [
-      THREE.MathUtils.randFloat(-7, 7),
-      THREE.MathUtils.randFloat(-1.8, 2.8),
-      THREE.MathUtils.randFloat(-3, 5)
-    ]);
-    line.rotation.y = THREE.MathUtils.randFloat(-0.3, 0.3);
-    speedLines.push(line);
   }
 
   for (let i = 0; i < 12; i++) {
@@ -297,10 +260,14 @@ function resetGame() {
   activeCount = 80;
   nextCurve = 1;
   commandSide = 0;
+  passengerCommand = 0;
   speedLevel = 1;
   danceMode = false;
   resultFlash = 0;
   roundTimer = 7.5;
+  busRoll = 0;
+  rollVelocity = 0;
+  lateralDrift = 0;
   setMessage('右カーブだ。車内の右へ押し寄せろ！', 2);
   passengers.forEach((p, i) => {
     p.area = pickArea(i);
@@ -318,9 +285,9 @@ function resetTargets(randomize = false) {
 
     const home = p.group.userData.home;
     const push = p.area === 'cabin' ? 1.02 : p.area === 'window' ? 1.18 : p.area === 'roof' ? 1.32 : 1.48;
-    const crush = 1 - Math.abs(commandSide) * (0.45 + crowd * 0.2);
+    const crush = 1 - Math.abs(passengerCommand) * (0.45 + crowd * 0.2);
     const disorder = THREE.MathUtils.mapLinear(crowd, 0.25, 1, 0.24, 0.08);
-    p.targetSide = THREE.MathUtils.clamp(home.baseSide * crush - commandSide * push + THREE.MathUtils.randFloatSpread(disorder), -1.85, 1.85);
+    p.targetSide = THREE.MathUtils.clamp(home.baseSide * crush - passengerCommand * push + THREE.MathUtils.randFloatSpread(disorder), -1.85, 1.85);
     if (randomize) p.side = home.baseSide + THREE.MathUtils.randFloatSpread(0.08);
   });
 }
@@ -334,7 +301,7 @@ function tick(now) {
   updatePassengers(dt, t);
   const com = calculateCOM();
   const stability = calculateStability(com);
-  updateBus(com, stability, t);
+  updateBus(com, stability, t, dt);
   updateRoad(dt);
   updateEffects(com, stability, t, dt);
   updateUI(com, stability, dt);
@@ -351,6 +318,7 @@ function updateInput(dt) {
   const right = keys.has('ArrowRight') || keys.has('KeyD');
   const target = left && !right ? -1 : right && !left ? 1 : 0;
   commandSide = THREE.MathUtils.lerp(commandSide, target, 1 - Math.pow(0.018, dt));
+  passengerCommand = THREE.MathUtils.lerp(passengerCommand, commandSide, 1 - Math.pow(0.09, dt));
   resetTargets(false);
 }
 
@@ -362,9 +330,9 @@ function updatePassengers(dt, t) {
 
     p.side = THREE.MathUtils.lerp(p.side, p.targetSide, 1 - Math.pow(0.035, dt));
     const home = p.group.userData.home;
-    const sameSide = Math.max(0, Math.sign(commandSide) * p.side);
+    const sameSide = Math.max(0, Math.sign(passengerCommand) * p.side);
     const squeeze = Math.max(0, Math.abs(p.side) - 0.62) * crowd;
-    const pile = sameSide * Math.abs(commandSide) * crowd;
+    const pile = sameSide * Math.abs(passengerCommand) * crowd;
     p.group.position.copy(passengerPosition(p, home, pile, squeeze, t));
 
     const slideLean = THREE.MathUtils.clamp((p.targetSide - p.side) * -0.5, -0.65, 0.65);
@@ -375,8 +343,8 @@ function updatePassengers(dt, t) {
 
     const parts = p.group.userData.parts;
     const wave = Math.sin(t * (danceMode ? 13 : 8) + home.phase) * (danceMode ? 0.9 : 0.25);
-    parts.armL.rotation.z = -0.65 + wave + commandSide * 0.4;
-    parts.armR.rotation.z = 0.65 - wave + commandSide * 0.4;
+    parts.armL.rotation.z = -0.65 + wave + passengerCommand * 0.4;
+    parts.armR.rotation.z = 0.65 - wave + passengerCommand * 0.4;
   }
 }
 
@@ -386,20 +354,20 @@ function passengerPosition(p, home, pile, squeeze, t) {
   let z = -1.75 + (home.row % 9) * 0.42 + (home.zSeed - 0.5) * 0.14;
 
   if (p.area === 'window') {
-    x = p.side * 1.35 + Math.sign(p.side || commandSide || 1) * 0.18;
+    x = p.side * 1.35 + Math.sign(p.side || passengerCommand || 1) * 0.18;
     y = 0.08 + home.ySeed * 0.7 + pile * 0.22;
   } else if (p.area === 'roof') {
     x = p.side * 1.2 + (home.xSeed - 0.5) * 0.22;
     y = 1.02 + (home.lane % 5) * 0.13 + home.ySeed * 0.16 + pile * 0.42;
     z = -1.95 + (home.row % 10) * 0.42 + home.zSeed * 0.1;
   } else if (p.area === 'side') {
-    const sideSign = p.side === 0 ? Math.sign(commandSide || 1) : Math.sign(p.side);
+    const sideSign = p.side === 0 ? Math.sign(passengerCommand || 1) : Math.sign(p.side);
     x = sideSign * (1.78 + home.xSeed * 0.32 + squeeze * 0.16);
     y = -0.18 + home.ySeed * 0.95 + pile * 0.14;
     z = -1.95 + (home.row % 10) * 0.43 + home.zSeed * 0.12;
   }
 
-  x += Math.sign(commandSide) * squeeze * 0.22;
+  x += Math.sign(passengerCommand) * squeeze * 0.22;
   y += Math.sin(t * 8 + home.phase) * (danceMode ? 0.055 : 0.012);
   return new THREE.Vector3(x, y, z);
 }
@@ -421,68 +389,85 @@ function calculateCOM() {
 }
 
 function calculateStability(com) {
-  const desired = nextCurve * 0.58;
-  const horizontal = 1 - Math.min(1, Math.abs(desired - com.x) / 1.35);
+  const desired = nextCurve * 0.48;
+  const alignmentError = Math.abs(desired - com.x);
+  const horizontal = 1 - Math.min(1, alignmentError / 1.0);
+  const overLeanPenalty = Math.max(0, Math.abs(com.x) - 0.5) * 1.45;
   const highPenalty = Math.max(0, com.y - 0.72) * 0.36 + com.roofRatio * 0.16;
   const overloadPenalty = Math.max(0, activeCount - 130) / 260;
-  return Math.round(THREE.MathUtils.clamp(horizontal - highPenalty - overloadPenalty, 0, 1) * 100);
+  return Math.round(THREE.MathUtils.clamp(horizontal - highPenalty - overloadPenalty - overLeanPenalty, 0, 1) * 100);
 }
 
-function updateBus(com, stability, t) {
-  const roll = -com.x * 0.28 + nextCurve * 0.04 + Math.sin(t * 8) * 0.006;
-  const danger = stability < 36 ? (36 - stability) / 36 : 0;
-  busRig.rotation.z = THREE.MathUtils.lerp(busRig.rotation.z, roll + nextCurve * danger * 0.1, 0.15);
+function updateBus(com, stability, t, dt) {
+  const desired = nextCurve * 0.48;
+  const overLean = Math.max(0, Math.abs(com.x) - 0.5);
+  const wrongSide = Math.sign(com.x || 1) !== nextCurve ? Math.min(1, Math.abs(com.x) * 1.2) : 0;
+  const danger = Math.max(stability < 42 ? (42 - stability) / 42 : 0, overLean * 1.4, wrongSide * 0.65);
+  const targetRoll = com.x * 0.36 + nextCurve * 0.04 + Math.sin(t * 8) * 0.006;
+  const spring = (targetRoll - busRoll) * (10 + danger * 12);
+  rollVelocity += spring * dt;
+  rollVelocity *= Math.pow(0.56 - Math.min(0.22, danger * 0.12), dt);
+  rollVelocity += Math.sign(targetRoll || nextCurve) * danger * dt * 0.8;
+  busRoll += rollVelocity * dt;
+  busRoll = THREE.MathUtils.clamp(busRoll, -0.62, 0.62);
+
+  lateralDrift += (com.x - desired) * danger * dt * 1.7;
+  lateralDrift *= Math.pow(0.78, dt);
+  lateralDrift = THREE.MathUtils.clamp(lateralDrift, -0.75, 0.75);
+
+  busRig.rotation.z = busRoll;
   busRig.rotation.x = Math.sin(t * 7) * 0.01;
-  busRig.position.y = -Math.abs(com.x) * 0.08 + danger * 0.06 + Math.sin(t * 14) * 0.01;
-  busRig.position.x = resultFlash * THREE.MathUtils.randFloatSpread(0.03);
+  busRig.position.y = -Math.abs(com.x) * 0.08 + danger * 0.09 + Math.sin(t * 14) * 0.01;
+  busRig.position.x = lateralDrift + resultFlash * THREE.MathUtils.randFloatSpread(0.03);
 }
 
 function updateRoad(dt) {
   const speed = (2.6 + activeCount * 0.034) * speedLevel;
-  for (let i = 0; i < roadTiles.length; i++) {
-    const tile = roadTiles[i];
+  roadScroll = (roadScroll + dt * speed) % 0.8;
+  rebuildRoadGeometry();
+  for (let i = 0; i < laneMarks.length; i++) {
     const mark = laneMarks[i];
-    tile.position.z -= dt * speed;
-    if (tile.position.z < -8) tile.position.z += 24;
-    const curve = roadCurveX(tile.position.z);
-    tile.position.x = curve;
-    mark.position.set(curve, -0.64, tile.position.z);
+    let z = -7 + i * 0.8 - roadScroll;
+    if (z < -8) z += 24;
+    mark.position.set(roadCurveX(z), -0.64, z);
     mark.visible = i % 2 === 0;
-    tile.scale.x = THREE.MathUtils.clamp(1.0 - Math.max(0, tile.position.z - 5) * 0.035, 0.64, 1.05);
   }
+}
+
+function rebuildRoadGeometry() {
+  const verts = [];
+  const indices = [];
+  const segments = 42;
+  const zMin = -8;
+  const zMax = 16;
+  for (let i = 0; i <= segments; i++) {
+    const z = zMin + (zMax - zMin) * (i / segments);
+    const x = roadCurveX(z - roadScroll * 0.25);
+    const width = THREE.MathUtils.lerp(8.8, 5.3, Math.max(0, z - 2) / 14);
+    verts.push(x - width / 2, 0, z, x + width / 2, 0, z);
+    if (i < segments) {
+      const a = i * 2;
+      indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+  }
+  roadMesh.geometry.dispose();
+  roadMesh.geometry = new THREE.BufferGeometry();
+  roadMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  roadMesh.geometry.setIndex(indices);
+  roadMesh.geometry.computeBoundingSphere();
 }
 
 function roadCurveX(z) {
   const far = THREE.MathUtils.clamp((z - 1.8) / 10.5, 0, 1);
-  return nextCurve * far * far * 5.2;
+  return nextCurve * far * far * (3 - 2 * far) * 5.2;
 }
 
 function updateEffects(com, stability, t, dt) {
-  const side = Math.sign(com.x || commandSide || nextCurve);
-  const pressure = THREE.MathUtils.clamp(Math.abs(com.x) * 0.75 + Math.abs(commandSide) * 0.5, 0, 1.25);
-  for (let i = 0; i < pressureBlobs.length; i++) {
-    const blob = pressureBlobs[i];
-    blob.visible = pressure > 0.16;
-    blob.position.set(side * (0.25 + i * 0.16), 0.08 + (i % 3) * 0.18 + pressure * 0.15, -1.2 + i * 0.45);
-    blob.scale.set(1.0 + pressure * 1.15 - i * 0.05, 0.42 + pressure * 0.35, 0.78);
-  }
-
   for (let i = 0; i < arrows.length; i++) {
     const arrow = arrows[i];
     arrow.scale.x = -nextCurve;
     arrow.position.x = nextCurve * (0.7 + i * 0.38);
     arrow.position.y = 2.35 + Math.sin(t * 8 + i) * 0.03;
-  }
-
-  const showSpeed = speedLevel > 1.08 || resultFlash > 0 || danceMode;
-  for (const line of speedLines) {
-    line.visible = showSpeed;
-    line.position.z -= dt * (5 + activeCount * 0.035);
-    if (line.position.z < -6) {
-      line.position.z = 8;
-      line.position.x = THREE.MathUtils.randFloat(-6.5, 6.5);
-      line.position.y = THREE.MathUtils.randFloat(-1.6, 2.8);
-    }
   }
 
   for (let i = 0; i < notes.length; i++) {
@@ -530,7 +515,8 @@ function updateUI(com, stability, dt) {
 }
 
 function judgeCurve(manual) {
-  const stability = calculateStability(calculateCOM());
+  const com = calculateCOM();
+  const stability = calculateStability(com);
   const success = stability >= 58;
   const sideText = nextCurve > 0 ? '右' : '左';
   if (success) {
@@ -545,7 +531,8 @@ function judgeCurve(manual) {
     activeCount = Math.max(36, activeCount - loss);
     speedLevel = Math.max(1, speedLevel - 0.18);
     danceMode = false;
-    setMessage(`重心が逆！危ないので ${loss}人 降車`, 2.4);
+    const reason = Math.sign(com.x || 1) === nextCurve ? '寄せすぎて片輪走行！' : '重心が逆！';
+    setMessage(`${reason} 危ないので ${loss}人 降車`, 2.4);
     showStamp('危険', true);
   }
 
@@ -553,6 +540,7 @@ function judgeCurve(manual) {
   roundTimer = manual ? 7.5 : 6.5;
   resultFlash = 1;
   commandSide *= 0.25;
+  passengerCommand *= 0.35;
   redistributeOverflow();
   resetTargets(false);
 }
