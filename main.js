@@ -111,6 +111,7 @@ let busRoll = 0;
 let rollVelocity = 0;
 let lateralDrift = 0;
 let crashEnergy = 0;
+let rolloverCooldown = 0;
 let roadScroll = 0;
 let last = performance.now();
 
@@ -285,6 +286,7 @@ function resetGame() {
   rollVelocity = 0;
   lateralDrift = 0;
   crashEnergy = 0;
+  rolloverCooldown = 0;
   setMessage('右カーブだ。車内の右へ押し寄せろ！', 2);
   passengers.forEach((p, i) => {
     p.area = pickArea(i);
@@ -320,6 +322,7 @@ function tick(now) {
   const curveStrength = getCurveStrength();
   const stability = calculateStability(com, curvePhase > 0 ? currentCurve : nextCurve, curveStrength);
   updateBus(com, stability, t, dt);
+  checkRollover(stability, dt);
   updateRoad(dt);
   updateEffects(com, stability, t, dt);
   updateUI(com, stability, dt);
@@ -341,12 +344,13 @@ function updateInput(dt) {
   const right = keys.has('ArrowRight') || keys.has('KeyD');
   const target = left && !right ? -1 : right && !left ? 1 : 0;
   commandSide = THREE.MathUtils.lerp(commandSide, target, 1 - Math.pow(0.018, dt));
-  passengerCommand = THREE.MathUtils.lerp(passengerCommand, commandSide, 1 - Math.pow(0.09, dt));
+  passengerCommand = THREE.MathUtils.lerp(passengerCommand, commandSide, 1 - Math.pow(0.22, dt));
   resetTargets(false);
 }
 
 function updatePassengers(dt, t) {
   const crowd = activeCount / maxPassengers;
+  const sway = THREE.MathUtils.clamp(-rollVelocity * 0.95 - busRoll * 0.24 + lateralDrift * 0.16, -0.78, 0.78);
   for (let i = 0; i < passengers.length; i++) {
     const p = passengers[i];
     if (!p.active) continue;
@@ -356,11 +360,15 @@ function updatePassengers(dt, t) {
     const sameSide = Math.max(0, Math.sign(passengerCommand) * p.side);
     const squeeze = Math.max(0, Math.abs(p.side) - 0.62) * crowd;
     const pile = sameSide * Math.abs(passengerCommand) * crowd;
-    p.group.position.copy(passengerPosition(p, home, pile, squeeze, t));
+    const pos = passengerPosition(p, home, pile, squeeze, t);
+    const areaSway = p.area === 'roof' ? 1.25 : p.area === 'side' ? 1.45 : 1;
+    pos.x += sway * areaSway + Math.sin(t * 19 + home.phase) * crashEnergy * 0.08;
+    pos.y += Math.abs(sway) * 0.08 + Math.sin(t * 23 + home.phase) * crashEnergy * 0.04;
+    p.group.position.copy(pos);
 
     const slideLean = THREE.MathUtils.clamp((p.targetSide - p.side) * -0.5, -0.65, 0.65);
     const dance = danceMode ? Math.sin(t * 12 + home.phase) * 0.28 : 0;
-    p.group.rotation.z = slideLean + dance;
+    p.group.rotation.z = slideLean + dance - sway * 0.55;
     p.group.rotation.y = Math.sin(t * 3 + home.phase) * 0.08;
     p.group.scale.setScalar(home.scale * (1 + squeeze * 0.12));
 
@@ -429,18 +437,18 @@ function updateBus(com, stability, t, dt) {
   const overLean = Math.max(0, Math.abs(com.x) - 0.46);
   const wrongSide = Math.sign(com.x || 1) !== curveDir ? Math.min(1, Math.abs(com.x) * 1.2) : 0;
   const danger = Math.max(stability < 42 ? (42 - stability) / 42 : 0, overLean * 1.4, wrongSide * 0.65);
-  const weightRoll = com.x * 0.36;
+  const weightRoll = com.x * 0.58;
   const centrifugalRoll = -curveDir * curveStrength * 0.34;
   const targetRoll = weightRoll + centrifugalRoll + Math.sin(t * 8) * 0.006;
   const spring = (targetRoll - busRoll) * (10 + danger * 12);
   rollVelocity += spring * dt;
   rollVelocity *= Math.pow(0.5 - Math.min(0.24, danger * 0.16), dt);
-  rollVelocity += Math.sign(targetRoll || curveDir) * danger * dt * (0.9 + crashEnergy * 0.75);
+  rollVelocity += Math.sign(targetRoll || curveDir) * danger * dt * (1.2 + crashEnergy * 1.25);
   busRoll += rollVelocity * dt;
-  busRoll = THREE.MathUtils.clamp(busRoll, -0.95, 0.95);
+  busRoll = THREE.MathUtils.clamp(busRoll, -1.22, 1.22);
 
   const tipping = Math.max(0, Math.abs(busRoll) - 0.42) + Math.max(0, danger - 0.45);
-  crashEnergy = THREE.MathUtils.clamp(crashEnergy + tipping * dt * 1.25 - (1 - danger) * dt * 0.45, 0, 1);
+  crashEnergy = THREE.MathUtils.clamp(crashEnergy + tipping * dt * 1.65 - (1 - danger) * dt * 0.32, 0, 1);
 
   lateralDrift += (com.x - desired) * (danger + crashEnergy) * dt * 2.4;
   lateralDrift += Math.sign(busRoll || com.x || 1) * crashEnergy * dt * 1.2;
@@ -456,6 +464,34 @@ function updateBus(com, stability, t, dt) {
   busRig.rotation.x = Math.sin(t * 7) * 0.01 + crashEnergy * Math.sin(t * 18) * 0.035;
   busRig.position.x = lateralDrift + pivotX + resultFlash * THREE.MathUtils.randFloatSpread(0.03) + crashEnergy * THREE.MathUtils.randFloatSpread(0.08);
   busRig.position.y = pivotY - Math.abs(com.x) * 0.08 + danger * 0.09 + Math.sin(t * 14) * 0.01;
+}
+
+function checkRollover(stability, dt) {
+  rolloverCooldown = Math.max(0, rolloverCooldown - dt);
+  if (rolloverCooldown > 0) return;
+
+  const rolloverAngle = 0.88;
+  const unrecoverable = Math.abs(busRoll) > rolloverAngle || crashEnergy > 0.98 || (stability < 12 && Math.abs(busRoll) > 0.62);
+  if (!unrecoverable) return;
+
+  const loss = Math.min(activeCount - 36, 16 + Math.floor(Math.abs(busRoll) * 18) + Math.floor(crashEnergy * 12));
+  if (loss <= 0) return;
+
+  activeCount -= loss;
+  danceMode = false;
+  speedLevel = Math.max(1, speedLevel - 0.24);
+  rolloverCooldown = 1.2;
+  resultFlash = 1;
+  commandSide = 0;
+  passengerCommand *= -0.2;
+  crashEnergy = 0.55;
+  rollVelocity = -Math.sign(busRoll) * 0.75;
+  busRoll = Math.sign(busRoll) * 1.05;
+  lateralDrift += Math.sign(busRoll) * 0.45;
+  redistributeOverflow();
+  resetTargets(false);
+  setMessage(`横転しかけた！${loss}人が降車`, 2.6);
+  showStamp('横転寸前', true);
 }
 
 function updateRoad(dt) {
