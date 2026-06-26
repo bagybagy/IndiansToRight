@@ -326,6 +326,7 @@ function tick(now) {
   updateRoad(dt);
   updateEffects(com, stability, t, dt);
   updateUI(com, stability, dt);
+  updateDebugState(com, stability);
 
   if (curvePhase > 0) {
     curvePhase = Math.max(0, curvePhase - dt);
@@ -350,7 +351,8 @@ function updateInput(dt) {
 
 function updatePassengers(dt, t) {
   const crowd = activeCount / maxPassengers;
-  const sway = THREE.MathUtils.clamp(-rollVelocity * 0.95 - busRoll * 0.24 + lateralDrift * 0.16, -0.78, 0.78);
+  const curveSway = curvePhase > 0 ? -currentCurve * getCurveStrength() * 0.28 : 0;
+  const sway = THREE.MathUtils.clamp(-rollVelocity * 0.42 - busRoll * 0.34 + curveSway, -0.88, 0.88);
   for (let i = 0; i < passengers.length; i++) {
     const p = passengers[i];
     if (!p.active) continue;
@@ -362,8 +364,8 @@ function updatePassengers(dt, t) {
     const pile = sameSide * Math.abs(passengerCommand) * crowd;
     const pos = passengerPosition(p, home, pile, squeeze, t);
     const areaSway = p.area === 'roof' ? 1.25 : p.area === 'side' ? 1.45 : 1;
-    pos.x += sway * areaSway + Math.sin(t * 19 + home.phase) * crashEnergy * 0.08;
-    pos.y += Math.abs(sway) * 0.08 + Math.sin(t * 23 + home.phase) * crashEnergy * 0.04;
+    pos.x += sway * areaSway;
+    pos.y += Math.abs(sway) * 0.08;
     p.group.position.copy(pos);
 
     const slideLean = THREE.MathUtils.clamp((p.targetSide - p.side) * -0.5, -0.65, 0.65);
@@ -435,24 +437,20 @@ function updateBus(com, stability, t, dt) {
   const curveDir = curvePhase > 0 ? currentCurve : nextCurve;
   const desired = curveDir * (0.44 + curveStrength * 0.12);
   const overLean = Math.max(0, Math.abs(com.x) - 0.46);
-  const wrongSide = Math.sign(com.x || 1) !== curveDir ? Math.min(1, Math.abs(com.x) * 1.2) : 0;
+  const wrongSide = curvePhase > 0 && Math.sign(com.x || 1) !== curveDir ? Math.min(1, Math.abs(com.x) * 1.2) : 0;
   const danger = Math.max(stability < 42 ? (42 - stability) / 42 : 0, overLean * 1.4, wrongSide * 0.65);
-  const weightRoll = com.x * 0.58;
+  const weightRoll = com.x * 0.98;
   const centrifugalRoll = -curveDir * curveStrength * 0.34;
-  const targetRoll = weightRoll + centrifugalRoll + Math.sin(t * 8) * 0.006;
-  const spring = (targetRoll - busRoll) * (10 + danger * 12);
-  rollVelocity += spring * dt;
-  rollVelocity *= Math.pow(0.5 - Math.min(0.24, danger * 0.16), dt);
-  rollVelocity += Math.sign(targetRoll || curveDir) * danger * dt * (1.2 + crashEnergy * 1.25);
-  busRoll += rollVelocity * dt;
-  busRoll = THREE.MathUtils.clamp(busRoll, -1.22, 1.22);
+  const targetRoll = THREE.MathUtils.clamp(weightRoll + centrifugalRoll, -1.18, 1.18);
+  const previousRoll = busRoll;
+  const response = 1 - Math.pow(danger > 0.25 ? 0.015 : 0.08, dt);
+  busRoll = THREE.MathUtils.lerp(busRoll, targetRoll, response);
+  rollVelocity = (busRoll - previousRoll) / Math.max(dt, 0.001);
 
-  const tipping = Math.max(0, Math.abs(busRoll) - 0.42) + Math.max(0, danger - 0.45);
-  crashEnergy = THREE.MathUtils.clamp(crashEnergy + tipping * dt * 1.65 - (1 - danger) * dt * 0.32, 0, 1);
+  crashEnergy = THREE.MathUtils.clamp((Math.abs(busRoll) - 0.48) / 0.38 + Math.max(0, Math.abs(com.x) - 0.62) * 1.2, 0, 1);
 
-  lateralDrift += (com.x - desired) * (danger + crashEnergy) * dt * 2.4;
-  lateralDrift += Math.sign(busRoll || com.x || 1) * crashEnergy * dt * 1.2;
-  lateralDrift *= Math.pow(0.72, dt);
+  lateralDrift += (com.x - desired) * danger * curveStrength * dt * 2.0;
+  lateralDrift *= Math.pow(0.62, dt);
   lateralDrift = THREE.MathUtils.clamp(lateralDrift, -1.35, 1.35);
 
   const pivotX = busRoll >= 0 ? -1.78 : 1.78;
@@ -461,8 +459,8 @@ function updateBus(com, stability, t, dt) {
   bus.position.y = -pivotY;
 
   busRig.rotation.z = busRoll;
-  busRig.rotation.x = Math.sin(t * 7) * 0.01 + crashEnergy * Math.sin(t * 18) * 0.035;
-  busRig.position.x = lateralDrift + pivotX + resultFlash * THREE.MathUtils.randFloatSpread(0.03) + crashEnergy * THREE.MathUtils.randFloatSpread(0.08);
+  busRig.rotation.x = curveStrength * Math.sin(t * 11) * 0.014;
+  busRig.position.x = lateralDrift + pivotX + resultFlash * THREE.MathUtils.randFloatSpread(0.03);
   busRig.position.y = pivotY - Math.abs(com.x) * 0.08 + danger * 0.09 + Math.sin(t * 14) * 0.01;
 }
 
@@ -470,11 +468,11 @@ function checkRollover(stability, dt) {
   rolloverCooldown = Math.max(0, rolloverCooldown - dt);
   if (rolloverCooldown > 0) return;
 
-  const rolloverAngle = 0.88;
-  const unrecoverable = Math.abs(busRoll) > rolloverAngle || crashEnergy > 0.98 || (stability < 12 && Math.abs(busRoll) > 0.62);
+  const rolloverAngle = 0.82;
+  const unrecoverable = Math.abs(busRoll) > rolloverAngle || (stability < 10 && Math.abs(busRoll) > 0.62);
   if (!unrecoverable) return;
 
-  const loss = Math.min(activeCount - 36, 16 + Math.floor(Math.abs(busRoll) * 18) + Math.floor(crashEnergy * 12));
+  const loss = Math.min(activeCount - 36, 14 + Math.floor(Math.abs(busRoll) * 22));
   if (loss <= 0) return;
 
   activeCount -= loss;
@@ -484,9 +482,9 @@ function checkRollover(stability, dt) {
   resultFlash = 1;
   commandSide = 0;
   passengerCommand *= -0.2;
-  crashEnergy = 0.55;
-  rollVelocity = -Math.sign(busRoll) * 0.75;
-  busRoll = Math.sign(busRoll) * 1.05;
+  crashEnergy = 0.75;
+  rollVelocity = 0;
+  busRoll = Math.sign(busRoll) * 1.08;
   lateralDrift += Math.sign(busRoll) * 0.45;
   redistributeOverflow();
   resetTargets(false);
@@ -601,6 +599,24 @@ function updateUI(com, stability, dt) {
   } else {
     ui.message.textContent = `${sideText}カーブまで ${Math.max(0, Math.ceil(roundTimer))} 秒。車内の${sideText}へ押せ！`;
   }
+}
+
+function updateDebugState(com, stability) {
+  window.__indiansToRight = {
+    activeCount,
+    busRoll,
+    rollVelocity,
+    lateralDrift,
+    crashEnergy,
+    curvePhase,
+    currentCurve,
+    nextCurve,
+    passengerCommand,
+    comX: com.x,
+    comY: com.y,
+    stability,
+    message: ui.message.textContent
+  };
 }
 
 function judgeCurve(manual) {
