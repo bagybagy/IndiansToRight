@@ -22,12 +22,14 @@ const C = {
   orange: 0xff9f05,
   white: 0xffffff,
   glass: 0x061015,
-  road: 0x090909
+  road: 0x303033,
+  shadow: 0x171717
 };
 
 const mat = {
   ink: basic(C.ink),
   road: basic(C.road),
+  shadow: basic(C.shadow, 0.55),
   bus: basic(C.bus),
   cyan: basic(C.cyan),
   pink: basic(C.pink),
@@ -36,8 +38,14 @@ const mat = {
   glass: basic(C.glass)
 };
 
-function basic(color) {
-  return new THREE.MeshBasicMaterial({ color, toneMapped: false, side: THREE.DoubleSide });
+function basic(color, opacity = 1) {
+  return new THREE.MeshBasicMaterial({
+    color,
+    opacity,
+    transparent: opacity < 1,
+    toneMapped: false,
+    side: THREE.DoubleSide
+  });
 }
 
 function mesh(geo, material, parent, pos = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1]) {
@@ -149,7 +157,7 @@ function buildRoad() {
 function buildBus() {
   bus.position.set(0, 0, 0);
 
-  box(3.35, 0.18, 5.3, mat.ink, bus, [0, -0.52, 0]);
+  box(3.35, 0.14, 5.3, mat.shadow, bus, [0, -0.56, 0]);
   box(3.05, 0.2, 5.05, mat.cyan, bus, [0, -0.42, 0.02]);
   box(3.25, 0.14, 5.15, mat.ink, bus, [0, -0.02, 0]);
   box(2.96, 0.1, 4.86, mat.bus, bus, [0, 0.05, 0.02]);
@@ -161,6 +169,8 @@ function buildBus() {
 
   box(3.12, 0.85, 0.16, mat.ink, bus, [0, 0.18, -2.6]);
   box(3.12, 0.95, 0.16, mat.ink, bus, [0, 0.22, 2.6]);
+  box(2.76, 0.58, 0.12, mat.bus, bus, [0, 0.18, -2.69]);
+  box(2.76, 0.68, 0.12, mat.bus, bus, [0, 0.22, 2.69]);
   box(2.4, 0.58, 0.12, mat.glass, bus, [0, 0.28, 2.68]);
   box(2.15, 0.46, 0.13, mat.white, bus, [0, 0.3, 2.75]);
 
