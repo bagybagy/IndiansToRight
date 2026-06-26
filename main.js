@@ -110,6 +110,7 @@ let stampHold = 0;
 let busRoll = 0;
 let rollVelocity = 0;
 let lateralDrift = 0;
+let crashEnergy = 0;
 let roadScroll = 0;
 let last = performance.now();
 
@@ -283,6 +284,7 @@ function resetGame() {
   busRoll = 0;
   rollVelocity = 0;
   lateralDrift = 0;
+  crashEnergy = 0;
   setMessage('右カーブだ。車内の右へ押し寄せろ！', 2);
   passengers.forEach((p, i) => {
     p.area = pickArea(i);
@@ -432,19 +434,28 @@ function updateBus(com, stability, t, dt) {
   const targetRoll = weightRoll + centrifugalRoll + Math.sin(t * 8) * 0.006;
   const spring = (targetRoll - busRoll) * (10 + danger * 12);
   rollVelocity += spring * dt;
-  rollVelocity *= Math.pow(0.56 - Math.min(0.22, danger * 0.12), dt);
-  rollVelocity += Math.sign(targetRoll || curveDir) * danger * dt * 0.8;
+  rollVelocity *= Math.pow(0.5 - Math.min(0.24, danger * 0.16), dt);
+  rollVelocity += Math.sign(targetRoll || curveDir) * danger * dt * (0.9 + crashEnergy * 0.75);
   busRoll += rollVelocity * dt;
-  busRoll = THREE.MathUtils.clamp(busRoll, -0.62, 0.62);
+  busRoll = THREE.MathUtils.clamp(busRoll, -0.95, 0.95);
 
-  lateralDrift += (com.x - desired) * danger * dt * 1.7;
-  lateralDrift *= Math.pow(0.78, dt);
-  lateralDrift = THREE.MathUtils.clamp(lateralDrift, -0.75, 0.75);
+  const tipping = Math.max(0, Math.abs(busRoll) - 0.42) + Math.max(0, danger - 0.45);
+  crashEnergy = THREE.MathUtils.clamp(crashEnergy + tipping * dt * 1.25 - (1 - danger) * dt * 0.45, 0, 1);
+
+  lateralDrift += (com.x - desired) * (danger + crashEnergy) * dt * 2.4;
+  lateralDrift += Math.sign(busRoll || com.x || 1) * crashEnergy * dt * 1.2;
+  lateralDrift *= Math.pow(0.72, dt);
+  lateralDrift = THREE.MathUtils.clamp(lateralDrift, -1.35, 1.35);
+
+  const pivotX = busRoll >= 0 ? -1.78 : 1.78;
+  const pivotY = -0.55;
+  bus.position.x = -pivotX;
+  bus.position.y = -pivotY;
 
   busRig.rotation.z = busRoll;
-  busRig.rotation.x = Math.sin(t * 7) * 0.01;
-  busRig.position.y = -Math.abs(com.x) * 0.08 + danger * 0.09 + Math.sin(t * 14) * 0.01;
-  busRig.position.x = lateralDrift + resultFlash * THREE.MathUtils.randFloatSpread(0.03);
+  busRig.rotation.x = Math.sin(t * 7) * 0.01 + crashEnergy * Math.sin(t * 18) * 0.035;
+  busRig.position.x = lateralDrift + pivotX + resultFlash * THREE.MathUtils.randFloatSpread(0.03) + crashEnergy * THREE.MathUtils.randFloatSpread(0.08);
+  busRig.position.y = pivotY - Math.abs(com.x) * 0.08 + danger * 0.09 + Math.sin(t * 14) * 0.01;
 }
 
 function updateRoad(dt) {
@@ -545,6 +556,10 @@ function updateUI(com, stability, dt) {
 
   if (danceMode) {
     ui.message.textContent = '満員！屋根まで踊ってスピードアップ！';
+  } else if (crashEnergy > 0.72 || stability < 25) {
+    ui.message.textContent = '横転寸前！押しすぎを戻せ！';
+  } else if (crashEnergy > 0.38 || stability < 45) {
+    ui.message.textContent = '片輪走行！車体が流れている！';
   } else if (curvePhase > 0) {
     ui.message.textContent = `${sideText}カーブ突入！遠心力に耐えろ！`;
   } else {
